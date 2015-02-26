@@ -63,7 +63,9 @@ helpers do
 
   def undo_vote_for(obj)
     raise ArgumentError, t(:user_id_is_required) unless user
-    user.unvote(obj)
+    if user.voted?(obj)
+      user.unvote(obj)
+    end
     obj.reload.to_hash.to_json
   end
   
@@ -120,7 +122,7 @@ helpers do
     comment_threads,
     user_id,
     course_id,
-    group_id,
+    group_ids,
     filter_flagged,
     filter_unread,
     filter_unanswered,
@@ -129,11 +131,9 @@ helpers do
     page,
     per_page
   )
-    if group_id
-      comment_threads = comment_threads.any_of(
-        {"group_id" => group_id.to_i},
-        {"group_id" => {"$exists" => false}}
-      )
+
+    if not group_ids.empty?
+      comment_threads = get_group_id_criteria(comment_threads, group_ids)
     end
 
     if filter_flagged
@@ -255,14 +255,41 @@ helpers do
     end
   end
 
-  def notifications_by_date_range_and_user_ids start_date_time, end_date_time, user_ids  
+  def get_group_ids_from_params(params)
+    if params["group_id"] and params["group_ids"]
+      raise ArgumentError, t(:cannot_specify_group_id_and_group_ids)
+    end
+    group_ids = []
+    if params["group_id"]
+      group_ids << params["group_id"].to_i
+    elsif params["group_ids"]
+      group_ids.concat(params["group_ids"].split(",").map(&:to_i))
+    end
+    group_ids
+  end
+
+  def get_group_id_criteria(threads, group_ids)
+    if group_ids.length > 1
+      threads.any_of(
+        {"group_id" => {"$in" => group_ids}},
+        {"group_id" => {"$exists" => false}},
+      )
+    else
+      threads.any_of(
+        {"group_id" => group_ids[0]},
+        {"group_id" => {"$exists" => false}},
+      )
+    end
+  end
+
+  def notifications_by_date_range_and_user_ids(start_date_time, end_date_time, user_ids)
     #given a date range and a user, find all of the notifiable content
     #key by thread id, and return notification messages for each user
 
     #first, find the subscriptions for the users
     subscriptions = Subscription.where(:subscriber_id.in => user_ids)
 
-    #get the thhread ids
+    #get the thread ids
     thread_ids = subscriptions.collect{|t| t.source_id}.uniq
 
     #find all the comments
@@ -308,6 +335,9 @@ helpers do
               t["content"] = []
               t["title"] = current_thread.title
               t["commentable_id"] = current_thread.commentable_id
+              unless current_thread.group_id.nil?
+                t["group_id"] = current_thread.group_id
+              end
             else
               t = notification_map[u][c.course_id][c.comment_thread_id.to_s]
             end

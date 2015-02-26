@@ -58,6 +58,16 @@ describe "app" do
           rs.length.should == 1
           check_thread_result_json(nil, @threads["t1"], rs.first)
         end
+        it "returns only threads where course id and group ids match" do
+          @threads["t1"].course_id = "omg"
+          @threads["t1"].group_id = 100
+          @threads["t1"].save!
+          @threads["t2"].course_id = "omg"
+          @threads["t2"].group_id = 101
+          @threads["t2"].save!
+          rs = thread_result course_id: "omg", group_ids: "100,101", sort_order: "asc"
+          rs.length.should == 2
+        end
         it "returns only threads where course id and group id match or group id is nil" do
           @threads["t1"].course_id = "omg"
           @threads["t1"].group_id = 100
@@ -556,12 +566,20 @@ describe "app" do
       
       it "update information of comment thread" do
         thread = CommentThread.first
-        put "/api/v1/threads/#{thread.id}", body: "new body", title: "new title", commentable_id: "new_commentable_id"
+        comment = thread.comments.first
+        comment.endorsed = true
+        comment.endorsement = {:user_id => "42", :time => DateTime.now}
+        comment.save
+        put "/api/v1/threads/#{thread.id}", body: "new body", title: "new title", commentable_id: "new_commentable_id", thread_type: "question"
         last_response.should be_ok
         changed_thread = CommentThread.find(thread.id)
         changed_thread.body.should == "new body"
         changed_thread.title.should == "new title"
         changed_thread.commentable_id.should == "new_commentable_id"
+        changed_thread.thread_type.should == "question"
+        comment.reload
+        comment.endorsed.should == false
+        comment.endorsement.should == nil
         check_thread_result_json(nil, changed_thread, parse(last_response.body))
       end
       it "returns 400 when the thread does not exist" do
